@@ -1,0 +1,46 @@
+import "server-only";
+const base = () =>
+  (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(
+    /\/$/,
+    "",
+  );
+export async function openaiFetch(
+  path: string,
+  body: unknown,
+  timeout = 30_000,
+) {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error("OPENAI_API_KEY is not configured");
+  const response = await fetch(`${base()}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeout),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const requestId = response.headers.get("x-request-id");
+    console.error("OpenAI request failed", {
+      path,
+      status: response.status,
+      requestId,
+    });
+    throw new Error(`OpenAI ${response.status}`);
+  }
+  return response.json();
+}
+export function responseOutputText(data: {
+  output_text?: string;
+  output?: { content?: { type?: string; text?: string }[] }[];
+}) {
+  return (
+    data.output_text ??
+    data.output
+      ?.flatMap((o) => o.content ?? [])
+      .find((c) => c.type === "output_text")?.text ??
+    ""
+  );
+}
