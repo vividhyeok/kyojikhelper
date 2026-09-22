@@ -604,7 +604,7 @@ nav button.active {
 .full {
   width: 100%;
 }
-@media (min-width: 800px) {
+@media (min-width: 520px) {
   .login,
   .shell {
     width: min(100%, 440px);

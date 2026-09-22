@@ -33,8 +33,13 @@ export class RealtimeTranscriber {
       if (!tokenResponse.ok) {
         if (tokenResponse.status === 401)
           throw new Error("로그인이 만료되었습니다. 다시 로그인해 주세요.");
+        const detail = await tokenResponse.json().catch(() => null);
+        const upstream = detail?.diagnostic;
+        const cause = upstream?.param || upstream?.code;
         throw new Error(
-          "전사 연결을 만들 수 없습니다. API 키와 모델 설정을 확인해 주세요.",
+          cause
+            ? `전사 설정 오류 (${upstream.status}: ${cause}). 잠시 후 다시 시도해 주세요.`
+            : `전사 토큰 발급 실패 (${tokenResponse.status}). 잠시 후 다시 시도해 주세요.`,
         );
       }
       const { value } = await tokenResponse.json();
@@ -75,8 +80,13 @@ export class RealtimeTranscriber {
         },
         body: offer.sdp,
       });
-      if (!response.ok)
-        throw new Error("OpenAI WebRTC 연결을 만들지 못했습니다.");
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        const cause = detail?.error?.code || detail?.error?.param;
+        throw new Error(
+          `OpenAI 음성 연결 실패 (${response.status}${cause ? `: ${cause}` : ""}).`,
+        );
+      }
       await pc.setRemoteDescription({
         type: "answer",
         sdp: await response.text(),

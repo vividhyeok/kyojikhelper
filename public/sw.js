@@ -1,4 +1,4 @@
-const CACHE = "kyojik-shell-v2";
+const CACHE = "kyojik-shell-v3";
 const SHELL = ["/", "/manifest.webmanifest", "/icon.svg", "/icon-maskable.svg"];
 
 self.addEventListener("install", (event) => {
