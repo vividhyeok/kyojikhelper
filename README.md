@@ -1,13 +1,14 @@
 # Kyojik Helper
 
-교수의 말을 길게 요약하는 앱이 아니라, 설명에서 생략된 연결을 학습자의 개념 형성 순서로 짧게 복원하는 Android-first 실시간 강의 HUD입니다. 음성은 저장하지 않으며 확정 전사, 이해 이벤트, 강의 상태와 복습 노트만 브라우저 IndexedDB에 보관합니다.
+교수 발화를 요약하는 앱이 아니라, 교수의 설명 동작과 개념 관계를 학습자의 이해 문법으로 치환하는 Android-first 실시간 Cognitive Translator입니다. 관계를 알 수 없으면 인과를 만들어내지 않고 다음에 들어야 할 점을 알려줍니다. 음성은 저장하지 않으며 확정 전사, 이해 이벤트, 강의 상태와 복습 노트만 브라우저 IndexedDB에 보관합니다.
 
 ## 주요 기능
 
 - OpenAI Realtime GA + WebRTC 기반 `gpt-live-transcribe` 실시간 전사
 - 고정 polling이 아닌 final utterance 기반 adaptive scheduler
 - 최근 500~1,500자 + 압축 lecture state만 사용하는 비용 제한 분석
-- 누락 연결, 선수지식, 현재 위치와 다음 청취 지점만 보여주는 안정적인 HUD
+- 정의·비교·사례·역사적 전환·복귀·불명확한 관계를 구분하는 Understanding Frame HUD
+- 필요한 때만 누락된 한 단계를 보충하고, 교수 의견과 학술 배경·AI 추론을 분리
 - `놓침`, `왜?`, 카드 최소 읽기 시간, 중요도 queue, 의미 중복 억제
 - PIN + 서명된 HttpOnly/Secure/SameSite 세션 쿠키
 - IndexedDB 로컬 저장, 진행 중 수업 복구, History, Markdown/TXT/JSON export
@@ -26,6 +27,10 @@ npm run dev
 ```
 
 Windows PowerShell에서는 `Copy-Item .env.example .env.local`을 사용할 수 있습니다. `.env.local` 값을 채우고 `http://localhost:3000`을 엽니다. 개발 환경에서 시작 화면의 `Mock 강의 실행`으로 OpenAI 비용 없이 UI와 scheduler 흐름을 확인할 수 있습니다.
+
+개발용 `/lab`에서는 긴 강의 발화를 줄 단위로 붙여넣고 Mock 또는 실제 OpenAI 분석을 한 발화씩 재생할 수 있습니다. Mock은 비용이 들지 않습니다. 실제 API 버튼은 PIN 로그인과 유효한 API 설정이 필요하며 호출 비용이 발생합니다. `/lab`은 production에서 404입니다.
+
+서버가 실행 중일 때 `npm run eval:openai`로 사례·비교·불명확 전환 3건의 실제 모델 평가를 선택적으로 실행할 수 있습니다. 이 명령은 OpenAI 사용 요금이 발생하며 기본 테스트에는 포함되지 않습니다.
 
 ## Environment Variables
 

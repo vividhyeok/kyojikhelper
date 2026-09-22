@@ -2,15 +2,13 @@ import { ComprehensionEvent } from "@/lib/types";
 export function fingerprint(
   event: Pick<
     ComprehensionEvent,
-    "fromConcept" | "toConcept" | "missingBridge" | "shortExplanation"
+    "currentTopic" | "professorMove" | "fromConcept" | "toConcept" | "missingBridge" | "shortExplanation" | "relationType" | "understandingFrame"
   >,
 ) {
-  return [
-    event.fromConcept,
-    event.toConcept,
-    event.missingBridge,
-    event.shortExplanation,
-  ]
+  const identity = event.fromConcept && event.toConcept
+    ? [event.fromConcept, event.toConcept, event.relationType]
+    : [event.currentTopic, event.professorMove, event.relationType, event.understandingFrame || event.shortExplanation || event.missingBridge];
+  return identity
     .filter(Boolean)
     .join("|")
     .replace(/\s/g, "")

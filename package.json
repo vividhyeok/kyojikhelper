@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "eval:openai": "node scripts/evaluate.mjs"
   },
   "dependencies": {
     "idb": "^8.0.3",

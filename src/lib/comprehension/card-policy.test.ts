@@ -26,6 +26,9 @@ const event = (
 describe("card policy", () => {
   it("suppresses repeated meaning", () =>
     expect(isDuplicate(event("b", 2000), [event("a", 1000)])).toBe(true));
+  it("suppresses paraphrased cards about the same relation", () => {
+    expect(isDuplicate({ ...event("b", 2000), missingBridge: "다르게 표현한 보장 필요" }, [event("a", 1000)])).toBe(true);
+  });
   it("keeps a normal card readable but replaces for high priority", () => {
     expect(shouldReplaceCard(event("a", 1000), event("b", 2000), 5000)).toBe(
       false,

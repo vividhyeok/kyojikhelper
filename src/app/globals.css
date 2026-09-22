@@ -272,6 +272,16 @@ nav button.active {
   letter-spacing: -0.045em;
   margin: 9px 0 15px;
 }
+.understanding-frame {
+  margin: 12px 0 0;
+  max-width: 30ch;
+  color: #e4e8ed;
+  font-size: clamp(19px, 5vw, 26px);
+  font-weight: 650;
+  line-height: 1.38;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
 .chain {
   display: flex;
   flex-direction: column;

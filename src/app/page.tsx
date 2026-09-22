@@ -11,10 +11,12 @@ import {
   shouldReplaceCard,
 } from "@/lib/comprehension/card-policy";
 import { reduceLectureState } from "@/lib/comprehension/state";
+import { EDUCATION_HISTORY_FIXTURE, mockAnalysis } from "@/lib/comprehension/fixtures";
 import { repository, DEFAULT_SETTINGS } from "@/lib/storage/repository";
 import {
   ComprehensionAnalysis,
   ComprehensionEvent,
+  ConceptLink,
   EMPTY_STATE,
   FinalNote,
   Lecture,
@@ -26,6 +28,7 @@ import { WakeLockManager } from "@/lib/wake-lock";
 import { downloadLecture } from "@/lib/export";
 type Tab = "live" | "history" | "settings";
 const uid = () => crypto.randomUUID();
+const formatLink = (link: ConceptLink) => `${link.from} ${link.relation === "contrast" ? "↔" : link.relation === "category" ? "⊃" : link.relation === "definition" ? "=" : link.relation === "return" ? "← 다시" : link.relation === "unclear" ? "…" : "→"} ${link.relation === "example" ? "예: " : ""}${link.to}`;
 const fmt = (ms: number) =>
   `${Math.floor(ms / 3600000) ? `${Math.floor(ms / 3600000)}:` : ""}${String(Math.floor(ms / 60000) % 60).padStart(2, "0")}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
 const api = async <T,>(url: string, body: unknown): Promise<T> => {
@@ -89,7 +92,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
           Helper
         </h1>
         <p>
-          교수의 설명에서 빠진 연결만,
+          교수의 사고 흐름을 내 이해 방식으로,
           <br />
           강의를 놓치지 않을 만큼만.
         </p>
@@ -99,7 +102,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
         <div className="pin-field">
           <input
             id="pin"
-            inputMode="numeric"
+            inputMode="text"
             type={showPin ? "text" : "password"}
             value={pin}
             onChange={(e) => setPin(e.target.value)}
@@ -197,6 +200,16 @@ function LiveView({
 }) {
   const [lecture, setLecture] = useState<Lecture | undefined>(initial);
   const lectureRef = useRef(lecture);
+  const cardRef = useRef<ComprehensionEvent | null>(null);
+  const cardShownAtRef = useRef(0);
+  const settingsRef = useRef(settings);
+  const analysisQueue = useRef<Promise<void>>(Promise.resolve());
+  const enqueueRef = useRef<((mode: "auto" | "missed" | "why", pending?: TranscriptSegment[]) => Promise<void>) | null>(null);
+  const failedBatchRef = useRef<TranscriptSegment[]>([]);
+  const retryCountRef = useRef(0);
+  const demoRef = useRef(false);
+  const writeQueue = useRef<Promise<void>>(Promise.resolve());
+  const rehydratedRef = useRef<string | null>(null);
   const [partial, setPartial] = useState("");
   const [activity, setActivity] = useState<"waiting" | "speech" | "transcribing">("waiting");
   const [micLevel, setMicLevel] = useState(0);
@@ -214,23 +227,29 @@ function LiveView({
   useEffect(() => {
     lectureRef.current = lecture;
   }, [lecture]);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+  useEffect(() => { cardRef.current = card; }, [card]);
   useEffect(() => {
     if (initial && !lecture) setLecture(initial);
+    if (initial?.demo) demoRef.current = true;
   }, [initial, lecture]);
   useEffect(() => {
-    if (!lecture) return;
+    if (!lecture?.startedAt) return;
+    const startedAt = lecture.startedAt;
     const t = setInterval(
-      () => setElapsed(Date.now() - lecture.startedAt),
+      () => setElapsed(Date.now() - startedAt),
       1000,
     );
     return () => clearInterval(t);
-  }, [lecture]);
+  }, [lecture?.startedAt]);
   const save = async (next: Lecture) => {
     lectureRef.current = next;
     setLecture(next);
-    await repository.updateLecture(next);
+    const task = writeQueue.current.then(() => repository.updateLecture(next));
+    writeQueue.current = task.catch(() => {});
+    await task;
   };
-  const analyze = useCallback(
+  const analyzeOne = useCallback(
     async (mode: "auto" | "missed" | "why", pending?: TranscriptSegment[]) => {
       const l = lectureRef.current;
       if (!l) return;
@@ -240,25 +259,26 @@ function LiveView({
         const payload = {
           ...analysisPayload(
             l.stateSnapshots.at(-1)?.state ?? EMPTY_STATE,
-            boundedContext(l.transcriptSegments.slice(0, -batch.length)),
+            boundedContext(l.transcriptSegments.slice(0, -batch.length), mode === "missed" ? 2400 : 1500),
             batch,
+            mode === "missed" ? 2400 : 1500,
           ),
           mode,
-          density: settings.density,
-          profile: settings.profile,
+          density: settingsRef.current.density,
+          profile: settingsRef.current.profile,
         };
-        const result = await api<ComprehensionAnalysis>(
-          "/api/analyze",
-          payload,
-        );
-        const state = reduceLectureState(
-          l.stateSnapshots.at(-1)?.state ?? EMPTY_STATE,
-          result,
-        );
+        const result = demoRef.current
+          ? mockAnalysis(EDUCATION_HISTORY_FIXTURE.find(x => x.utterance === batch.at(-1)?.text) ?? EDUCATION_HISTORY_FIXTURE[0])
+          : await api<ComprehensionAnalysis>("/api/analyze", payload);
+        const latest = lectureRef.current;
+        if (!latest || latest.id !== l.id || latest.status !== "live") return;
+        const state = reduceLectureState(latest.stateSnapshots.at(-1)?.state ?? EMPTY_STATE, result);
         let next = {
-          ...l,
+          ...latest,
+          conceptLinks: [...(latest.conceptLinks ?? latest.stateSnapshots.at(-1)?.state.conceptLinks ?? []), ...(result.statePatch.conceptLinks ?? [])].filter((link, index, all) => all.findIndex(x => x.from === link.from && x.to === link.to && x.relation === link.relation) === index),
+          analysisCursor: mode === "auto" && batch.length ? batch.at(-1)?.id : latest.analysisCursor,
           stateSnapshots: [
-            ...l.stateSnapshots,
+            ...latest.stateSnapshots,
             { timestamp: Date.now(), state },
           ],
         };
@@ -274,27 +294,67 @@ function LiveView({
               ...next,
               comprehensionEvents: [...next.comprehensionEvents, event],
             };
-            if (shouldReplaceCard(card, event) || mode !== "auto")
+            if (shouldReplaceCard(cardRef.current ? {...cardRef.current, timestamp:cardShownAtRef.current} : null, event) || mode !== "auto") {
+              cardRef.current = event;
+              cardShownAtRef.current = Date.now();
               setCard(event);
-            else setQueued((q) => [...q, event]);
+            } else setQueued((q) => [...q, event]);
           }
         }
         await save(next);
+        scheduler.current.recordOutcome(result.shouldDisplay);
+        retryCountRef.current = 0;
       } catch {
+        if (mode === "auto" && pending?.length) {
+          const ids = new Set(failedBatchRef.current.map(x => x.id));
+          failedBatchRef.current = [...pending.filter(x => !ids.has(x.id)), ...failedBatchRef.current];
+          if (retryCountRef.current++ < 2) {
+            window.setTimeout(() => {
+              if (lectureRef.current?.status === "live" && failedBatchRef.current.length) void enqueueRef.current?.("auto", []);
+            }, 3000 * retryCountRef.current);
+          }
+        }
       } finally {
         setBusy(false);
       }
     },
-    [card, settings],
+    [],
   );
+  const analyze = useCallback((mode: "auto" | "missed" | "why", pending?: TranscriptSegment[]) => {
+    const task = analysisQueue.current.then(() => {
+      const failed = failedBatchRef.current;
+      failedBatchRef.current = [];
+      const ids = new Set(failed.map(x => x.id));
+      const batch = [...failed, ...(pending ?? []).filter(x => !ids.has(x.id))];
+      return analyzeOne(mode, batch.length ? batch : pending);
+    });
+    analysisQueue.current = task.catch(() => {});
+    return task;
+  }, [analyzeOne]);
+  useEffect(() => { enqueueRef.current = analyze; }, [analyze]);
+  useEffect(() => {
+    if (!initial || rehydratedRef.current === initial.id) return;
+    rehydratedRef.current = initial.id;
+    if (!lectureRef.current) lectureRef.current = initial;
+    const cursor = initial.analysisCursor;
+    const index = cursor ? initial.transcriptSegments.findIndex(x => x.id === cursor) : -1;
+    const lastSnapshotAt = initial.stateSnapshots.at(-1)?.timestamp ?? initial.startedAt;
+    const remaining = index >= 0
+      ? initial.transcriptSegments.slice(index + 1)
+      : initial.transcriptSegments.filter(x => x.timestamp > lastSnapshotAt);
+    for (const segment of remaining) scheduler.current.add(segment);
+    if (remaining.length) void analyze("auto", scheduler.current.consume());
+  }, [initial, analyze]);
   useEffect(() => {
     if (!card || !queued.length) return;
     const id = setTimeout(
       () => {
+        cardRef.current = queued[0];
+        cardShownAtRef.current = Date.now();
         setCard(queued[0]);
         setQueued((q) => q.slice(1));
       },
-      Math.max(0, 12000 - (Date.now() - card.timestamp)),
+      Math.max(0, 12000 - (Date.now() - cardShownAtRef.current)),
     );
     return () => clearTimeout(id);
   }, [card, queued]);
@@ -344,6 +404,7 @@ function LiveView({
   useEffect(() => {
     if (
       initial &&
+      !initial.demo &&
       lecture?.id === initial.id &&
       connection === "disconnected" &&
       !transcriber.current
@@ -366,8 +427,10 @@ function LiveView({
       startedAt: now,
       duration: 0,
       status: "live",
+      demo: data.demo,
       transcriptSegments: [],
       comprehensionEvents: [],
+      conceptLinks: [],
       stateSnapshots: [
         {
           timestamp: now,
@@ -380,6 +443,7 @@ function LiveView({
     };
     await repository.createLecture(l);
     await save(l);
+    demoRef.current = data.demo;
     if (data.demo) void runDemo(onFinal);
     else await connect(l);
     onSaved();
@@ -388,8 +452,7 @@ function LiveView({
     const l = lectureRef.current;
     if (!l) return;
     let pending = scheduler.current.getPending();
-    if (!pending.length) pending = l.transcriptSegments.slice(-5);
-    else scheduler.current.consume();
+    if (!pending.length) pending = l.transcriptSegments.slice(mode === "missed" ? -9 : -5);
     await analyze(mode, pending);
   };
   const finish = async () => {
@@ -403,12 +466,18 @@ function LiveView({
       scheduler.current.consume();
       await analyze("auto", pending);
     }
+    await analysisQueue.current;
     const current = lectureRef.current!;
     let finalNote: FinalNote | undefined;
     try {
-      finalNote = await api<FinalNote>("/api/finalize", {
+      finalNote = current.demo ? {
+        overview: current.stateSnapshots.at(-1)?.state.conceptChain ?? [],
+        keyPoints: ["교수의 설명 동작과 개념 관계를 구분해 보세요."],
+        bridges: [], terms: [], structure: "개발용 Mock 강의입니다.", review: "관계가 불분명할 때 인과를 만들지 않고 다음 설명을 기다립니다."
+      } : await api<FinalNote>("/api/finalize", {
         title: current.title,
         state: current.stateSnapshots.at(-1)?.state ?? EMPTY_STATE,
+        conceptLinks: current.conceptLinks?.slice(-100),
         transcript: current.transcriptSegments.map((s) => s.text),
         events: current.comprehensionEvents,
       });
@@ -435,7 +504,7 @@ function LiveView({
         <div>
           <span className={`dot ${connection}`} />
           <span>
-            {connection === "connected"
+            {lecture.demo ? "Mock 재생" : connection === "connected"
               ? "듣는 중"
               : connection === "reconnecting"
                 ? "다시 연결 중"
@@ -456,20 +525,12 @@ function LiveView({
       </header>
       <div className="hud">
         <section className="now">
-          <span className="eyebrow">지금</span>
+          <span className="eyebrow">지금{state.professorMove ? ` · ${state.professorMove}` : ""}</span>
           <h2>{state.currentTopic}</h2>
-          {state.conceptChain.length > 0 && (
-            <div className="chain">
-              {state.conceptChain.slice(-4).map((x, i, a) => (
-                <span key={`${x}-${i}`}>
-                  {x}
-                  {i < a.length - 1 && <b>↓</b>}
-                </span>
-              ))}
-            </div>
-          )}
+          {card?.currentTopic === state.currentTopic && card.understandingFrame && <p className="understanding-frame">{card.understandingFrame}</p>}
+          {(card?.currentTopic !== state.currentTopic || !card?.understandingFrame) && state.conceptLinks?.at(-1)?.to === state.currentTopic ? <p className="understanding-frame">{formatLink(state.conceptLinks.at(-1)!)}</p> : null}
         </section>
-        <section className="bridge">
+        {card && card.currentTopic === state.currentTopic && (card.missingBridge || card.prerequisite || card.relationExplanation || card.shortExplanation) && <section className="bridge">
           <span className="eyebrow">
             {card?.source === "missed"
               ? "20초 복구"
@@ -477,19 +538,16 @@ function LiveView({
                 ? "왜 여기로 왔음?"
                 : card?.eventType === "prerequisite"
                   ? "알아야 할 전제"
-                  : "빠진 연결"}
+                  : card?.missingBridge ? "빠진 한 단계" : card?.relationType === "unclear" ? "관계 확인 중" : "이렇게 이해"}
           </span>
           <p>
-            {card?.missingBridge ||
-              card?.prerequisite ||
-              card?.shortExplanation ||
-              "필요한 연결이 생기면 여기에만 짧게 표시합니다."}
+            {card?.missingBridge || card?.prerequisite || card?.relationExplanation || card?.shortExplanation}
           </p>
-        </section>
-        <section className="focus">
+        </section>}
+        {(card?.currentTopic === state.currentTopic ? card?.nextFocus || state.nextFocus : state.nextFocus) && <section className="focus">
           <span className="eyebrow">다음에 들을 것</span>
-          <p>{card?.nextFocus || "교수의 다음 개념 전환"}</p>
-        </section>
+          <p>{card?.currentTopic === state.currentTopic ? card?.nextFocus || state.nextFocus : state.nextFocus}</p>
+        </section>}
         {settings.transcriptDisplay === "small" &&
           (partial || lecture.transcriptSegments.length > 0) && (
             <p className="mini-transcript">
@@ -554,12 +612,7 @@ function LiveView({
   );
 }
 async function runDemo(onFinal: (id: string, text: string) => void) {
-  const lines = [
-    "근대사회에서는 개인이 자신의 의사에 따라서 선택할 수 있다는 생각이 중요해집니다.",
-    "그런데 결국 사람들은 서로 교환을 하게 되죠.",
-    "그렇기 때문에 계약 자유의 원칙이 중요한 의미를 갖습니다.",
-    "여기서 중요한 것은 계약을 국가가 어떻게 보장하는가 하는 문제입니다.",
-  ];
+  const lines = EDUCATION_HISTORY_FIXTURE.map(x => x.utterance);
   for (let i = 0; i < lines.length; i++) {
     await new Promise((r) => setTimeout(r, 700));
     onFinal(`demo-${i}`, lines[i]);
@@ -808,7 +861,7 @@ function LectureDetail({
           <>
             <h3>전체 흐름</h3>
             <div className="chain large">
-              {(
+              {(lecture.conceptLinks ?? lecture.stateSnapshots.at(-1)?.state.conceptLinks)?.length ? (lecture.conceptLinks ?? lecture.stateSnapshots.at(-1)?.state.conceptLinks)?.map((link, i) => <span key={i}>{formatLink(link)}</span>) : (
                 n?.overview ??
                 lecture.stateSnapshots.at(-1)?.state.conceptChain ??
                 []
@@ -835,9 +888,9 @@ function LectureDetail({
             {lecture.comprehensionEvents.map((e) => (
               <article key={e.id}>
                 <small>
-                  {e.fromConcept} → {e.toConcept}
+                  {e.fromConcept} {e.relationType === "contrast" ? "↔" : e.relationType === "unclear" ? "…" : "→"} {e.toConcept} {e.professorMove ? `· ${e.professorMove}` : ""}
                 </small>
-                <p>{e.missingBridge || e.shortExplanation || e.prerequisite}</p>
+                <p>{e.understandingFrame || e.missingBridge || e.relationExplanation || e.shortExplanation || e.prerequisite}</p>
               </article>
             ))}
           </>

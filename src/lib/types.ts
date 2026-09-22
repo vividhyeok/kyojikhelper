@@ -6,6 +6,9 @@ export type EventType =
   | "orientation"
   | "contrast";
 export type Importance = "low" | "normal" | "high";
+export type RelationType = "cause" | "premise" | "problem_solution" | "contrast" | "example" | "elaboration" | "definition" | "category" | "chronology" | "return" | "association" | "unclear";
+export type EpistemicStatus = "explicit" | "inferred" | "background" | "professor_opinion" | "unclear";
+export interface ConceptLink { from: string; to: string; relation: RelationType; label?: string }
 
 export interface LectureState {
   currentTopic: string;
@@ -13,6 +16,11 @@ export interface LectureState {
   recentClaims: string[];
   unresolved: string[];
   professorPosition: string | null;
+  conceptLinks?: ConceptLink[];
+  professorMove?: string | null;
+  relationType?: RelationType;
+  epistemicStatus?: EpistemicStatus;
+  nextFocus?: string | null;
 }
 
 export interface ComprehensionAnalysis {
@@ -21,6 +29,10 @@ export interface ComprehensionAnalysis {
   confidence: number;
   currentTopic: string;
   professorMove: string | null;
+  relationType?: RelationType;
+  epistemicStatus?: EpistemicStatus;
+  understandingFrame?: string | null;
+  relationExplanation?: string | null;
   fromConcept: string | null;
   toConcept: string | null;
   missingBridge: string | null;
@@ -28,12 +40,7 @@ export interface ComprehensionAnalysis {
   shortExplanation: string | null;
   nextFocus: string | null;
   importance: Importance;
-  statePatch: Partial<
-    Pick<
-      LectureState,
-      "currentTopic" | "conceptChain" | "recentClaims" | "unresolved"
-    >
-  >;
+  statePatch: Partial<LectureState>;
 }
 
 export interface TranscriptSegment {
@@ -64,8 +71,11 @@ export interface Lecture {
   endedAt?: number;
   duration: number;
   status: "live" | "finished";
+  demo?: boolean;
+  analysisCursor?: string;
   transcriptSegments: TranscriptSegment[];
   comprehensionEvents: ComprehensionEvent[];
+  conceptLinks?: ConceptLink[];
   stateSnapshots: { timestamp: number; state: LectureState }[];
   finalNote?: FinalNote;
 }
@@ -80,4 +90,9 @@ export const EMPTY_STATE: LectureState = {
   recentClaims: [],
   unresolved: [],
   professorPosition: null,
+  conceptLinks: [],
+  professorMove: null,
+  relationType: "unclear",
+  epistemicStatus: "unclear",
+  nextFocus: null,
 };

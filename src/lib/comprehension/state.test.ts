@@ -26,3 +26,11 @@ describe("lecture state", () =>
     expect(s.currentTopic).toBe("계약");
     expect(s.conceptChain).toEqual(["개인", "교환", "계약"]);
   }));
+it("preserves relation-aware links without promoting professor opinion to a fact", () => {
+  const opinion = { ...a, relationType: "contrast" as const, epistemicStatus: "professor_opinion" as const, professorMove: "교수 개인 평가", statePatch: { conceptLinks: [{ from: "영웅교육", to: "문답법", relation: "contrast" as const }], professorPosition: "문답법이 더 낫다는 교수 평가" } };
+  const first = reduceLectureState(EMPTY_STATE, opinion);
+  const second = reduceLectureState(first, opinion);
+  expect(second.conceptLinks).toHaveLength(1);
+  expect(second.professorPosition).toContain("교수 평가");
+  expect(second.recentClaims).toEqual([]);
+});

@@ -74,13 +74,14 @@ export async function POST(request: Request) {
           {
             role: "system",
             content:
-              "단순 요약이 아니라 교수가 A에서 B로 간 논리 구조를 복원한다. 짧고 복습 가능한 한국어로 쓴다. 확실한 학술 내용과 교수 의견을 구분한다.",
+              "Cognitive Translation 복습 노트다. 개념 이동을 모두 인과 사슬로 만들지 않는다. rollingState.conceptLinks의 관계(cause, contrast, example, chronology, unclear 등)를 보존한다. 관계가 불명확하면 불명확하다고 쓴다. 교수의 명시 주장, 교수 개인 평가, AI가 보충한 학술 배경을 구분한다. 단순 발화 요약보다 학생이 현재 사고 구조를 복구할 수 있는 짧은 한국어를 쓴다.",
           },
           {
             role: "user",
             content: JSON.stringify({
               title: input.title,
               rollingState: input.state,
+              conceptRelations: input.conceptLinks,
               detectedBridges: input.events,
               transcriptOrChunkSummaries: source,
             }),
