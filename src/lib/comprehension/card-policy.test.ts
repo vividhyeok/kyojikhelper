@@ -36,5 +36,6 @@ describe("card policy", () => {
     expect(
       shouldReplaceCard(event("a", 1000), event("b", 2000, "high"), 5000),
     ).toBe(true);
+    expect(shouldReplaceCard(event("a", 1000), event("b", 7000), 7000)).toBe(true);
   });
 });

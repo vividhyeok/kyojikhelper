@@ -26,6 +26,13 @@ describe("adaptive scheduler", () => {
       ).trigger,
     ).toBe(true);
   });
+  it("analyzes a new transition after one final utterance when prior context exists", () => {
+    const s = new AdaptiveAnalysisScheduler();
+    const first = seg("1", "공동체가 요구하는 인간상을 먼저 이야기했습니다.");
+    s.add(first);
+    s.consume();
+    expect(s.add(seg("2", "그런데 이제 소크라테스의 교육을 봅시다."), first).trigger).toBe(true);
+  });
   it("bounds recent context by characters", () => {
     const x = Array.from({ length: 20 }, (_, i) =>
       seg(String(i), "가".repeat(100)),

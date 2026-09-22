@@ -9,7 +9,7 @@
 - 최근 500~1,500자 + 압축 lecture state만 사용하는 비용 제한 분석
 - 정의·비교·사례·역사적 전환·복귀·불명확한 관계를 구분하는 Understanding Frame HUD
 - 필요한 때만 누락된 한 단계를 보충하고, 교수 의견과 학술 배경·AI 추론을 분리
-- `놓침`, `왜?`, 카드 최소 읽기 시간, 중요도 queue, 의미 중복 억제
+- 한 화면에 하나의 이해 메시지만 표시하는 HUD, 5초 읽기 시간, 최신 카드 우선, 의미 중복 억제
 - PIN + 서명된 HttpOnly/Secure/SameSite 세션 쿠키
 - IndexedDB 로컬 저장, 진행 중 수업 복구, History, Markdown/TXT/JSON export
 - 화면 Wake Lock, WebRTC 지수 backoff 재연결, 중복 segment 방지

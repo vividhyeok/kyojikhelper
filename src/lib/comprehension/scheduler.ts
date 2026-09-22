@@ -48,15 +48,15 @@ export class AdaptiveAnalysisScheduler {
     const text = this.pending.map((s) => s.text).join(" ");
     const marker =
       MARKERS.some((m) => segment.text.includes(m)) &&
-      text.length >= Math.min(this.minChars, 55) && this.pending.length >= 2;
+      segment.text.length >= 22 && (!!previous || this.pending.length >= 2);
     const structural =
       (DEFINITIONS.some((m) => segment.text.includes(m)) ||
         CONCLUSIONS.some((m) => segment.text.includes(m))) &&
-      text.length >= this.minChars;
+      text.length >= Math.min(this.minChars, 55);
     const pause =
       !!previous &&
       segment.timestamp - previous.timestamp > 7_000 &&
-      text.length >= this.minChars;
+      text.length >= Math.min(this.minChars, 70);
     const terms = new Set(segment.text.match(/[가-힣A-Za-z]{3,}/g) ?? []);
     const overlap = this.previousTerms.size
       ? [...terms].filter((t) => this.previousTerms.has(t)).length /
@@ -64,10 +64,11 @@ export class AdaptiveAnalysisScheduler {
       : 1;
     const namedTransition = /(?:이제|다음은|다음으로|이번에는|한편|반면|에 비해|와 달리|라는 개념)/.test(segment.text);
     const topicShift = this.pending.length >= 2 && namedTransition && overlap < 0.25 && text.length >= 100;
-    const meaningfulBatch = this.pending.length >= (this.quietBatches >= 2 ? 3 : 2) && text.length >= (this.quietBatches >= 2 ? 220 : 140);
+    const meaningfulBatch = this.pending.length >= 2 && text.length >= (this.quietBatches >= 2 ? 120 : 95);
+    const substantialTurn = !!previous && segment.text.length >= 150;
     const overflow = text.length >= this.maxChars || this.pending.length >= 7;
     this.previousTerms = terms;
-    const trigger = marker || structural || pause || topicShift || meaningfulBatch || overflow;
+    const trigger = marker || structural || pause || topicShift || meaningfulBatch || substantialTurn || overflow;
     return {
       trigger,
       reason: marker
@@ -80,9 +81,11 @@ export class AdaptiveAnalysisScheduler {
               ? "topic-shift"
               : meaningfulBatch
                 ? "batch"
-              : overflow
-                ? "safety"
-                : "accumulate",
+                : substantialTurn
+                  ? "substantial-turn"
+                  : overflow
+                    ? "safety"
+                    : "accumulate",
       pending: [...this.pending],
     };
   }

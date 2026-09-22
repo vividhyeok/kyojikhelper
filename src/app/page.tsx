@@ -11,6 +11,7 @@ import {
   shouldReplaceCard,
 } from "@/lib/comprehension/card-policy";
 import { reduceLectureState } from "@/lib/comprehension/state";
+import { selectHudMessage } from "@/lib/comprehension/hud";
 import { EDUCATION_HISTORY_FIXTURE, mockAnalysis } from "@/lib/comprehension/fixtures";
 import { repository, DEFAULT_SETTINGS } from "@/lib/storage/repository";
 import {
@@ -297,8 +298,9 @@ function LiveView({
             if (shouldReplaceCard(cardRef.current ? {...cardRef.current, timestamp:cardShownAtRef.current} : null, event) || mode !== "auto") {
               cardRef.current = event;
               cardShownAtRef.current = Date.now();
+              setQueued([]);
               setCard(event);
-            } else setQueued((q) => [...q, event]);
+            } else setQueued([event]);
           }
         }
         await save(next);
@@ -349,12 +351,16 @@ function LiveView({
     if (!card || !queued.length) return;
     const id = setTimeout(
       () => {
+        if (queued[0].currentTopic !== lectureRef.current?.stateSnapshots.at(-1)?.state.currentTopic) {
+          setQueued([]);
+          return;
+        }
         cardRef.current = queued[0];
         cardShownAtRef.current = Date.now();
         setCard(queued[0]);
-        setQueued((q) => q.slice(1));
+        setQueued([]);
       },
-      Math.max(0, 12000 - (Date.now() - cardShownAtRef.current)),
+      Math.max(0, 5000 - (Date.now() - cardShownAtRef.current)),
     );
     return () => clearTimeout(id);
   }, [card, queued]);
@@ -448,13 +454,6 @@ function LiveView({
     else await connect(l);
     onSaved();
   };
-  const force = async (mode: "missed" | "why") => {
-    const l = lectureRef.current;
-    if (!l) return;
-    let pending = scheduler.current.getPending();
-    if (!pending.length) pending = l.transcriptSegments.slice(mode === "missed" ? -9 : -5);
-    await analyze(mode, pending);
-  };
   const finish = async () => {
     const l = lectureRef.current;
     if (!l || busy || !confirm("수업을 종료하고 복습 노트를 만들까요?")) return;
@@ -498,6 +497,7 @@ function LiveView({
   };
   if (!lecture) return <StartForm onStart={start} />;
   const state = lecture.stateSnapshots.at(-1)?.state ?? EMPTY_STATE;
+  const message = selectHudMessage(state, card);
   return (
     <section className="live-view">
       <header className="live-header">
@@ -524,30 +524,12 @@ function LiveView({
         </button>
       </header>
       <div className="hud">
-        <section className="now">
-          <span className="eyebrow">지금{state.professorMove ? ` · ${state.professorMove}` : ""}</span>
-          <h2>{state.currentTopic}</h2>
-          {card?.currentTopic === state.currentTopic && card.understandingFrame && <p className="understanding-frame">{card.understandingFrame}</p>}
-          {(card?.currentTopic !== state.currentTopic || !card?.understandingFrame) && state.conceptLinks?.at(-1)?.to === state.currentTopic ? <p className="understanding-frame">{formatLink(state.conceptLinks.at(-1)!)}</p> : null}
+        <section className="glance" aria-live="polite" aria-atomic="true">
+          <span className="glance-label">{message.label}</span>
+          {message.main !== message.topic && <p className="glance-topic">{message.topic}</p>}
+          <h2>{message.main}</h2>
+          {message.detail && <p className="glance-detail">{message.detail}</p>}
         </section>
-        {card && card.currentTopic === state.currentTopic && (card.missingBridge || card.prerequisite || card.relationExplanation || card.shortExplanation) && <section className="bridge">
-          <span className="eyebrow">
-            {card?.source === "missed"
-              ? "20초 복구"
-              : card?.source === "why"
-                ? "왜 여기로 왔음?"
-                : card?.eventType === "prerequisite"
-                  ? "알아야 할 전제"
-                  : card?.missingBridge ? "빠진 한 단계" : card?.relationType === "unclear" ? "관계 확인 중" : "이렇게 이해"}
-          </span>
-          <p>
-            {card?.missingBridge || card?.prerequisite || card?.relationExplanation || card?.shortExplanation}
-          </p>
-        </section>}
-        {(card?.currentTopic === state.currentTopic ? card?.nextFocus || state.nextFocus : state.nextFocus) && <section className="focus">
-          <span className="eyebrow">다음에 들을 것</span>
-          <p>{card?.currentTopic === state.currentTopic ? card?.nextFocus || state.nextFocus : state.nextFocus}</p>
-        </section>}
         {settings.transcriptDisplay === "small" &&
           (partial || lecture.transcriptSegments.length > 0) && (
             <p className="mini-transcript">
@@ -591,14 +573,8 @@ function LiveView({
         </div>
       )}
       <div className="live-actions">
-        <button onClick={() => force("missed")} disabled={busy}>
-          놓침
-        </button>
-        <button onClick={() => force("why")} disabled={busy}>
-          왜?
-        </button>
         <button className="end" onClick={finish} disabled={busy}>
-          종료
+          수업 종료
         </button>
       </div>
       {sheet && (
@@ -948,13 +924,13 @@ function SettingsView({
             className={value.density === "minimal" ? "active" : ""}
             onClick={() => onChange({ ...value, density: "minimal" })}
           >
-            최소<small>빠진 연결만</small>
+            최소<small>핵심 전환만</small>
           </button>
           <button
             className={value.density === "normal" ? "active" : ""}
             onClick={() => onChange({ ...value, density: "normal" })}
           >
-            보통<small>선수지식도</small>
+            보통<small>조금 더 자주</small>
           </button>
         </div>
       </section>

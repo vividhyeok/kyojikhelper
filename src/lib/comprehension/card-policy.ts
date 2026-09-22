@@ -17,7 +17,7 @@ export function fingerprint(
 export function isDuplicate(
   event: ComprehensionEvent,
   previous: ComprehensionEvent[],
-  windowMs = 120_000,
+  windowMs = 30_000,
 ) {
   const key = fingerprint(event);
   return previous.some(
@@ -28,7 +28,7 @@ export function shouldReplaceCard(
   current: ComprehensionEvent | null,
   incoming: ComprehensionEvent,
   now = Date.now(),
-  minReadMs = 12_000,
+  minReadMs = 5_000,
 ) {
   return (
     !current ||
