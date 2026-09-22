@@ -4,7 +4,7 @@ export function transcriptionSession(input: {
   keywords: string[];
 }) {
   const keywords = input.keywords
-    .map((word) => word.replace(/[<>\r\n]/g, " ").trim())
+    .map((word) => word.replace(/[<>\r\n]/g, " ").trim().slice(0, 80))
     .filter(Boolean)
     .slice(0, 30);
   return {
@@ -27,6 +27,15 @@ export function transcriptionSession(input: {
           },
         },
       },
+    },
+  };
+}
+
+export function minimalTranscriptionSession(model: string) {
+  return {
+    session: {
+      type: "transcription" as const,
+      audio: { input: { transcription: { model } } },
     },
   };
 }

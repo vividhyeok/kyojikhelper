@@ -37,9 +37,11 @@ export class RealtimeTranscriber {
         const upstream = detail?.diagnostic;
         const cause = upstream?.param || upstream?.code;
         throw new Error(
-          cause
-            ? `전사 설정 오류 (${upstream.status}: ${cause}). 잠시 후 다시 시도해 주세요.`
-            : `전사 토큰 발급 실패 (${tokenResponse.status}). 잠시 후 다시 시도해 주세요.`,
+          tokenResponse.status === 400 || tokenResponse.status === 413
+            ? detail?.error || "수업 설정을 확인해 주세요."
+            : cause
+              ? `전사 연결 준비 실패 (${upstream.status ?? tokenResponse.status}: ${cause}).`
+              : `전사 토큰 발급 실패 (${tokenResponse.status}). 잠시 후 다시 시도해 주세요.`,
         );
       }
       const { value } = await tokenResponse.json();

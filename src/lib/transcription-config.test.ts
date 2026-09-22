@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { transcriptionSession } from "./transcription-config";
+import { minimalTranscriptionSession, transcriptionSession } from "./transcription-config";
 
 describe("Realtime transcription session", () => {
   it("uses the current languages array and sanitized keyword hints", () => {
@@ -13,5 +13,15 @@ describe("Realtime transcription session", () => {
     expect(transcription.languages).toEqual(["ko", "en"]);
     expect(transcription).not.toHaveProperty("language");
     expect(transcription.keywords).toEqual(["사회계약론", "불법 줄바꿈  단어"]);
+  });
+  it("bounds excessive hints and can fall back to a minimal session", () => {
+    const config = transcriptionSession({
+      model: "gpt-live-transcribe",
+      keywords: Array.from({ length: 31 }, () => "가".repeat(100)),
+    });
+    expect(config.session.audio.input.transcription.keywords).toHaveLength(30);
+    expect(config.session.audio.input.transcription.keywords[0]).toHaveLength(80);
+    expect(minimalTranscriptionSession("gpt-live-transcribe").session.audio.input.transcription)
+      .toEqual({ model: "gpt-live-transcribe" });
   });
 });
