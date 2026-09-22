@@ -1,4 +1,13 @@
 import "server-only";
+export class OpenAIRequestError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string | null,
+    readonly param: string | null,
+  ) {
+    super(`OpenAI ${status}`);
+  }
+}
 const base = () =>
   (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(
     /\/$/,
@@ -23,12 +32,18 @@ export async function openaiFetch(
   });
   if (!response.ok) {
     const requestId = response.headers.get("x-request-id");
+    const payload = await response.json().catch(() => null);
+    const detail = payload?.error;
+    const code = typeof detail?.code === "string" ? detail.code : null;
+    const param = typeof detail?.param === "string" ? detail.param : null;
     console.error("OpenAI request failed", {
       path,
       status: response.status,
+      code,
+      param,
       requestId,
     });
-    throw new Error(`OpenAI ${response.status}`);
+    throw new OpenAIRequestError(response.status, code, param);
   }
   return response.json();
 }

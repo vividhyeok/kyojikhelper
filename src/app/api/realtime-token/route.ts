@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { requireAuth } from "@/lib/server/auth";
-import { openaiFetch } from "@/lib/server/openai";
+import { OpenAIRequestError, openaiFetch } from "@/lib/server/openai";
 import { transcriptionSession } from "@/lib/transcription-config";
 const schema = z.object({
   keywords: z.array(z.string().max(80)).max(30).default([]),
@@ -32,7 +32,13 @@ export async function POST(request: Request) {
       error instanceof Error ? error.message : "unknown",
     );
     return Response.json(
-      { error: "실시간 연결을 준비하지 못했습니다." },
+      {
+        error: "실시간 연결을 준비하지 못했습니다.",
+        diagnostic:
+          error instanceof OpenAIRequestError
+            ? { status: error.status, code: error.code, param: error.param }
+            : undefined,
+      },
       { status: 502 },
     );
   }
