@@ -67,6 +67,7 @@ export default function Home() {
 }
 function Login({ onLogin }: { onLogin: () => void }) {
   const [pin, setPin] = useState("");
+  const [showPin, setShowPin] = useState(false);
   const [error, setError] = useState("");
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -95,14 +96,26 @@ function Login({ onLogin }: { onLogin: () => void }) {
       </div>
       <form onSubmit={submit}>
         <label htmlFor="pin">접근 PIN</label>
-        <input
-          id="pin"
-          inputMode="numeric"
-          type="password"
-          value={pin}
-          onChange={(e) => setPin(e.target.value)}
-          autoFocus
-        />
+        <div className="pin-field">
+          <input
+            id="pin"
+            inputMode="numeric"
+            type={showPin ? "text" : "password"}
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+            autoComplete="off"
+            autoFocus
+          />
+          <button
+            type="button"
+            className="pin-visibility"
+            onClick={() => setShowPin((visible) => !visible)}
+            aria-label={showPin ? "PIN 숨기기" : "PIN 보기"}
+            aria-pressed={showPin}
+          >
+            {showPin ? "숨기기" : "보기"}
+          </button>
+        </div>
         <button className="primary">들어가기</button>
         {error && (
           <p role="alert" className="error">
@@ -138,9 +151,7 @@ function App({
       <div hidden={tab !== "live"}>
         <LiveView initial={active} settings={settings} onSaved={refresh} />
       </div>
-      {tab === "history" && (
-        <History lectures={lectures} onChange={refresh} />
-      )}
+      {tab === "history" && <History lectures={lectures} onChange={refresh} />}
       {tab === "settings" && (
         <SettingsView
           value={settings}

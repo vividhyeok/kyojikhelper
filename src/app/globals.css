@@ -107,6 +107,24 @@ button {
   border-color: var(--lime);
   box-shadow: 0 0 0 3px #b9f67a22;
 }
+.pin-field {
+  position: relative;
+}
+.pin-field input {
+  padding-right: 82px;
+}
+.pin-visibility {
+  position: absolute;
+  right: 5px;
+  top: 13px;
+  min-width: 68px;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--lime);
+  font-size: 14px;
+  font-weight: 700;
+}
 .primary,
 .secondary {
   min-height: 52px;
