@@ -323,6 +323,27 @@ nav button.active {
   display: flex;
   justify-content: space-between;
 }
+.connection-hint {
+  margin: 0 14px 8px;
+  padding: 9px 12px;
+  border: 1px solid #765034;
+  border-radius: 10px;
+  color: #f2b985;
+  font-size: 12px;
+  line-height: 1.45;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.connection-hint button {
+  min-width: 74px;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--lime);
+  font-weight: 700;
+}
 .live-actions {
   display: grid;
   grid-template-columns: 1fr 1fr 0.72fr;
@@ -582,6 +603,21 @@ nav button.active {
 }
 .full {
   width: 100%;
+}
+@media (min-width: 800px) {
+  .login,
+  .shell {
+    width: min(100%, 440px);
+    margin-left: auto;
+    margin-right: 0;
+    border-left: 1px solid var(--line);
+  }
+  .shell > nav {
+    left: auto;
+    right: 0;
+    translate: none;
+    width: 440px;
+  }
 }
 @media (max-width: 370px) {
   .start,

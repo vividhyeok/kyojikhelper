@@ -7,6 +7,7 @@ interface RealtimeCallbacks {
   onPartial: (text: string) => void;
   onFinal: (id: string, text: string) => void;
   onState: (state: ConnectionState) => void;
+  onError?: (message: string) => void;
 }
 export class RealtimeTranscriber {
   private pc?: RTCPeerConnection;
@@ -14,6 +15,7 @@ export class RealtimeTranscriber {
   private stream?: MediaStream;
   private stopped = false;
   private attempt = 0;
+  private retryTimer?: number;
   private seen = new Set<string>();
   constructor(
     private options: { keywords: string[]; topic?: string },
@@ -28,8 +30,15 @@ export class RealtimeTranscriber {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(this.options),
       });
-      if (!tokenResponse.ok) throw new Error("credential");
+      if (!tokenResponse.ok) {
+        if (tokenResponse.status === 401)
+          throw new Error("로그인이 만료되었습니다. 다시 로그인해 주세요.");
+        throw new Error(
+          "전사 연결을 만들 수 없습니다. API 키와 모델 설정을 확인해 주세요.",
+        );
+      }
       const { value } = await tokenResponse.json();
+      if (!value) throw new Error("전사 연결 정보를 받지 못했습니다.");
       this.stream ??= await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -46,6 +55,7 @@ export class RealtimeTranscriber {
       dc.onmessage = (event) => this.handle(JSON.parse(event.data));
       dc.onopen = () => {
         this.attempt = 0;
+        this.callbacks.onError?.("");
         this.callbacks.onState("connected");
       };
       pc.onconnectionstatechange = () => {
@@ -65,13 +75,25 @@ export class RealtimeTranscriber {
         },
         body: offer.sdp,
       });
-      if (!response.ok) throw new Error("webrtc");
+      if (!response.ok)
+        throw new Error("OpenAI WebRTC 연결을 만들지 못했습니다.");
       await pc.setRemoteDescription({
         type: "answer",
         sdp: await response.text(),
       });
-    } catch {
-      if (!this.stopped) this.reconnect();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "실시간 연결 오류";
+      this.callbacks.onError?.(
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "마이크 권한을 허용해 주세요."
+          : message,
+      );
+      if (error instanceof DOMException && error.name === "NotAllowedError") {
+        this.callbacks.onState("failed");
+      } else if (!this.stopped) {
+        this.reconnect();
+      }
     }
   }
   private handle(event: {
@@ -96,17 +118,23 @@ export class RealtimeTranscriber {
   private reconnect() {
     this.pc?.close();
     this.callbacks.onState("reconnecting");
-    const delay = Math.min(30_000, 1000 * 2 ** this.attempt++);
-    if (this.attempt > 8) {
+    const delay = Math.min(15_000, 1000 * 2 ** this.attempt++);
+    if (this.attempt > 3) {
       this.callbacks.onState("failed");
       return;
     }
-    window.setTimeout(() => {
+    this.retryTimer = window.setTimeout(() => {
       if (!this.stopped && navigator.onLine) void this.start(true);
     }, delay);
   }
+  retry() {
+    this.attempt = 0;
+    if (this.retryTimer) window.clearTimeout(this.retryTimer);
+    void this.start(true);
+  }
   stop() {
     this.stopped = true;
+    if (this.retryTimer) window.clearTimeout(this.retryTimer);
     this.dc?.close();
     this.pc?.close();
     this.stream?.getTracks().forEach((t) => t.stop());

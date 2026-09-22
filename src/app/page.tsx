@@ -199,6 +199,7 @@ function LiveView({
   const lectureRef = useRef(lecture);
   const [partial, setPartial] = useState("");
   const [connection, setConnection] = useState<ConnectionState>("disconnected");
+  const [connectionError, setConnectionError] = useState("");
   const [wake, setWake] = useState(false);
   const [card, setCard] = useState<ComprehensionEvent | null>(null);
   const [queued, setQueued] = useState<ComprehensionEvent[]>([]);
@@ -321,7 +322,12 @@ function LiveView({
     async (l: Lecture) => {
       transcriber.current = new RealtimeTranscriber(
         { keywords: l.keywords, topic: l.topic },
-        { onPartial: setPartial, onFinal, onState: setConnection },
+        {
+          onPartial: setPartial,
+          onFinal,
+          onState: setConnection,
+          onError: setConnectionError,
+        },
       );
       wakeLock.current = new WakeLockManager(setWake);
       await Promise.all([
@@ -429,7 +435,9 @@ function LiveView({
               ? "듣는 중"
               : connection === "reconnecting"
                 ? "다시 연결 중"
-                : "기록 대기"}
+                : connection === "failed"
+                  ? "연결 실패"
+                  : "기록 대기"}
           </span>
           <span className="time">{fmt(elapsed)}</span>
         </div>
@@ -495,6 +503,16 @@ function LiveView({
               : "강의에 집중하세요"}
         </span>
       </div>
+      {connection !== "connected" && connectionError && (
+        <div className="connection-hint" role="status">
+          <span>{connectionError}</span>
+          {connection === "failed" && (
+            <button onClick={() => transcriber.current?.retry()}>
+              다시 시도
+            </button>
+          )}
+        </div>
+      )}
       <div className="live-actions">
         <button onClick={() => force("missed")} disabled={busy}>
           놓침
