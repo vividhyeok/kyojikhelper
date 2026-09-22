@@ -25,12 +25,6 @@ export function transcriptionSession(input: {
             languages: ["ko", "en"],
             delay: "low" as const,
           },
-          turn_detection: {
-            type: "server_vad" as const,
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 700,
-          },
         },
       },
     },
