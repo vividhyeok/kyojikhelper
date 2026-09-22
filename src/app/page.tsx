@@ -198,6 +198,8 @@ function LiveView({
   const [lecture, setLecture] = useState<Lecture | undefined>(initial);
   const lectureRef = useRef(lecture);
   const [partial, setPartial] = useState("");
+  const [activity, setActivity] = useState<"waiting" | "speech" | "transcribing">("waiting");
+  const [micLevel, setMicLevel] = useState(0);
   const [connection, setConnection] = useState<ConnectionState>("disconnected");
   const [connectionError, setConnectionError] = useState("");
   const [wake, setWake] = useState(false);
@@ -327,6 +329,8 @@ function LiveView({
           onFinal,
           onState: setConnection,
           onError: setConnectionError,
+          onActivity: setActivity,
+          onLevel: setMicLevel,
         },
       );
       wakeLock.current = new WakeLockManager(setWake);
@@ -493,14 +497,29 @@ function LiveView({
             </p>
           )}
       </div>
-      <div className="status-row">
-        <span>{wake ? "화면 켜짐" : "화면 유지 불가"}</span>
-        <span>
-          {busy
-            ? "이해 흐름 정리 중"
-            : queued.length
-              ? `다음 안내 ${queued.length}개 대기`
-              : "강의에 집중하세요"}
+      <div
+        className="signal-strip"
+        role="status"
+        aria-label={`마이크 ${activity === "speech" ? "음성 감지 중" : "대기"}, 전사 ${lecture.transcriptSegments.length}개 저장됨`}
+      >
+        <span className="signal-mic">
+          <span className="signal-bars" aria-hidden="true">
+            {Array.from({ length: 5 }, (_, i) => (
+              <i key={i} className={i < micLevel ? "active" : ""} />
+            ))}
+          </span>
+          마이크
+        </span>
+        <span className={`signal-transcript ${partial || lecture.transcriptSegments.length ? "active" : ""}`}>
+          <i aria-hidden="true" />
+          {lecture.transcriptSegments.length
+            ? `전사 ${lecture.transcriptSegments.length}`
+            : partial || activity === "transcribing"
+              ? "전사 중"
+              : "전사 대기"}
+        </span>
+        <span className="signal-extra">
+          {busy ? "이해 정리 중" : wake ? "화면 켜짐" : "화면 유지 불가"}
         </span>
       </div>
       {connection !== "connected" && connectionError && (

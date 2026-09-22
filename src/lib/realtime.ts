@@ -1,3 +1,5 @@
+import { AudioTurnDetector } from "./realtime-turns";
+
 export type ConnectionState =
   | "connected"
   | "reconnecting"
@@ -7,6 +9,8 @@ interface RealtimeCallbacks {
   onPartial: (text: string) => void;
   onFinal: (id: string, text: string) => void;
   onState: (state: ConnectionState) => void;
+  onActivity?: (activity: "waiting" | "speech" | "transcribing") => void;
+  onLevel?: (level: number) => void;
   onError?: (message: string) => void;
 }
 export class RealtimeTranscriber {
@@ -17,6 +21,9 @@ export class RealtimeTranscriber {
   private attempt = 0;
   private retryTimer?: number;
   private seen = new Set<string>();
+  private audioContext?: AudioContext;
+  private levelTimer?: number;
+  private partialText = "";
   constructor(
     private options: { keywords: string[]; topic?: string },
     private callbacks: RealtimeCallbacks,
@@ -64,6 +71,7 @@ export class RealtimeTranscriber {
         this.attempt = 0;
         this.callbacks.onError?.("");
         this.callbacks.onState("connected");
+        void this.startTurnDetection();
       };
       pc.onconnectionstatechange = () => {
         if (
@@ -114,20 +122,81 @@ export class RealtimeTranscriber {
     delta?: string;
     transcript?: string;
   }) {
-    if (event.type === "conversation.item.input_audio_transcription.delta")
-      this.callbacks.onPartial(event.delta ?? "");
-    if (
-      event.type === "conversation.item.input_audio_transcription.completed" &&
-      event.item_id &&
-      event.transcript &&
-      !this.seen.has(event.item_id)
-    ) {
-      this.seen.add(event.item_id);
+    if (event.type === "conversation.item.input_audio_transcription.delta") {
+      this.partialText = (this.partialText + (event.delta ?? "")).slice(-500);
+      this.callbacks.onPartial(this.partialText);
+      this.callbacks.onActivity?.("transcribing");
+    }
+    if (event.type === "conversation.item.input_audio_transcription.completed") {
+      this.partialText = "";
       this.callbacks.onPartial("");
-      this.callbacks.onFinal(event.item_id, event.transcript.trim());
+      this.callbacks.onActivity?.("waiting");
+      if (
+        event.item_id &&
+        event.transcript?.trim() &&
+        !this.seen.has(event.item_id)
+      ) {
+        this.seen.add(event.item_id);
+        this.callbacks.onFinal(event.item_id, event.transcript.trim());
+      }
     }
   }
+  private async startTurnDetection() {
+    if (!this.stream || !this.dc || this.stopped) return;
+    this.stopTurnDetection();
+    try {
+      const context = (this.audioContext = new AudioContext());
+      const source = context.createMediaStreamSource(this.stream);
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+      await context.resume();
+      const samples = new Uint8Array(analyser.fftSize);
+      const detector = new AudioTurnDetector();
+      let lastActivity = "waiting";
+      let lastLevelUpdate = 0;
+      let lastCommitAt = performance.now();
+      this.levelTimer = window.setInterval(() => {
+        if (this.dc?.readyState !== "open") return;
+        analyser.getByteTimeDomainData(samples);
+        let power = 0;
+        for (const sample of samples) power += ((sample - 128) / 128) ** 2;
+        const level = Math.sqrt(power / samples.length);
+        const now = performance.now();
+        if (now - lastLevelUpdate >= 250) {
+          this.callbacks.onLevel?.(Math.min(5, Math.floor(level * 80)));
+          lastLevelUpdate = now;
+        }
+        const activity = detector.sample(level, now);
+        if (activity === "commit" || now - lastCommitAt >= 30_000) {
+          this.dc.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+          lastCommitAt = now;
+          this.callbacks.onActivity?.("transcribing");
+          lastActivity = "transcribing";
+        } else if (activity !== lastActivity) {
+          this.callbacks.onActivity?.(activity);
+          lastActivity = activity;
+        }
+      }, 100);
+    } catch {
+      // WebRTC still transports audio when Web Audio metering is unavailable.
+      this.levelTimer = window.setInterval(() => {
+        if (this.dc?.readyState === "open") {
+          this.dc.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+          this.callbacks.onActivity?.("transcribing");
+        }
+      }, 15_000);
+    }
+  }
+  private stopTurnDetection() {
+    if (this.levelTimer) window.clearInterval(this.levelTimer);
+    this.levelTimer = undefined;
+    void this.audioContext?.close();
+    this.audioContext = undefined;
+    this.callbacks.onLevel?.(0);
+  }
   private reconnect() {
+    this.stopTurnDetection();
     this.pc?.close();
     this.callbacks.onState("reconnecting");
     const delay = Math.min(15_000, 1000 * 2 ** this.attempt++);
@@ -146,6 +215,7 @@ export class RealtimeTranscriber {
   }
   stop() {
     this.stopped = true;
+    this.stopTurnDetection();
     if (this.retryTimer) window.clearTimeout(this.retryTimer);
     this.dc?.close();
     this.pc?.close();
