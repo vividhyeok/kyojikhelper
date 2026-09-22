@@ -6,6 +6,9 @@ export class WakeLockManager {
   }
   async acquire() {
     this.active = true;
+    if (this.lock && !this.lock.released) return;
+    document.removeEventListener("visibilitychange", this.visibility);
+    document.addEventListener("visibilitychange", this.visibility);
     if (!("wakeLock" in navigator) || document.visibilityState !== "visible") {
       this.onChange(false);
       return;
@@ -17,7 +20,6 @@ export class WakeLockManager {
         this.lock = null;
         this.onChange(false);
       });
-      document.addEventListener("visibilitychange", this.visibility);
     } catch {
       this.onChange(false);
     }

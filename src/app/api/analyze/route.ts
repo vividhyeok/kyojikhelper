@@ -1,5 +1,7 @@
 import { requireAuth } from "@/lib/server/auth";
-import { openaiFetch, responseOutputText } from "@/lib/server/openai";
+import { OpenAIRequestError, openaiFetch } from "@/lib/server/openai";
+import { parseStructuredResponse, ResponseProcessingError } from "@/lib/response-processing";
+import { z } from "zod";
 import { enforceAnalysisPolicy } from "@/lib/comprehension/policy";
 import {
   ANALYSIS_JSON_SCHEMA,
@@ -10,19 +12,22 @@ const SYSTEM = `당신은 교직·인문사회 강의를 학습자의 개념 형
 export async function POST(request: Request) {
   const denied = await requireAuth();
   if (denied) return denied;
+  let counts = { recent: 0, pending: 0, recentChars: 0, pendingChars: 0 };
   try {
     if (Number(request.headers.get("content-length") || 0) > 30_000)
-      throw new Error("large");
-    const input = analyzeRequestSchema.parse(await request.json());
+      return Response.json({ error: "분석 입력이 너무 깁니다.", stage: "request_validation", retryable: false }, { status: 413 });
+    let rawInput: unknown;
+    try { const body = await request.text(); if (body.length > 30_000) throw new Error("large"); rawInput = JSON.parse(body); }
+    catch { return Response.json({ error: "분석 입력을 확인해 주세요.", stage: "request_validation", retryable: false }, { status: 400 }); }
+    const input = analyzeRequestSchema.parse(rawInput);
+    counts = { recent: input.recent.length, pending: input.pending.length, recentChars: input.recent.join("").length, pendingChars: input.pending.join("").length };
     const mode =
       input.mode === "missed"
           ? "놓침: 전체 요약이 아니라 여기까지의 핵심 위치 → 지금 하는 설명 동작 → 다음에 들을 점을 3~5초 분량으로 복구한다."
         : input.mode === "why"
           ? "왜?: 관계 종류에 맞게 답한다. 비교는 비교 기준, 사례는 앞 개념의 구체화, 불명확하면 아직 근거가 없음을 말한다. 인과를 만들지 않는다."
           : "자동 분석: 정말 말할 가치가 있을 때만 표시한다.";
-    const data = await openaiFetch(
-      "/responses",
-      {
+    const body = {
         model: process.env.OPENAI_ANALYSIS_MODEL || "gpt-5.6-luna",
         input: [
           { role: "system", content: SYSTEM },
@@ -31,7 +36,7 @@ export async function POST(request: Request) {
             content: `${mode}\n설명 밀도: ${input.density}\n이해 프로필: ${input.profile}\nJSON 자료:\n${JSON.stringify({ state: input.state, recent: input.recent, pending: input.pending })}`,
           },
         ],
-        max_output_tokens: 850,
+        max_output_tokens: 1600,
         text: {
           format: {
             type: "json_schema",
@@ -40,10 +45,20 @@ export async function POST(request: Request) {
             schema: ANALYSIS_JSON_SCHEMA,
           },
         },
-      },
-      25_000,
-    );
-    const raw = JSON.parse(responseOutputText(data));
+      };
+    async function run(maxOutputTokens: number) {
+      const data = await openaiFetch("/responses", { ...body, max_output_tokens: maxOutputTokens }, 25_000);
+      return parseStructuredResponse(data, z.unknown());
+    }
+    let raw: unknown;
+    try { raw = await run(1600); }
+    catch (error) {
+      if (!(error instanceof ResponseProcessingError) || error.stage !== "openai_incomplete" || error.reason !== "max_output_tokens") throw error;
+      raw = await run(2400);
+    }
+    if (typeof raw !== "object" || !raw || !("statePatch" in raw) || typeof raw.statePatch !== "object" || !raw.statePatch)
+      throw new ResponseProcessingError("schema_validation", false);
+    const wire = raw as Record<string, unknown> & { statePatch: Record<string, unknown> };
     for (const key of [
       "currentTopic",
       "conceptChain",
@@ -55,19 +70,23 @@ export async function POST(request: Request) {
       "epistemicStatus",
       "nextFocus",
     ] as const)
-      if (raw.statePatch[key] === null) delete raw.statePatch[key];
-    for (const link of raw.statePatch.conceptLinks ?? [])
-      if (link.label === null) delete link.label;
-    const result = enforceAnalysisPolicy(analysisSchema.parse(raw), input.mode);
+      if (wire.statePatch[key] === null) delete wire.statePatch[key];
+    if (Array.isArray(wire.statePatch.conceptLinks))
+      for (const link of wire.statePatch.conceptLinks)
+        if (typeof link === "object" && link && "label" in link && link.label === null) delete link.label;
+    const parsed = analysisSchema.safeParse(wire);
+    if (!parsed.success) throw new ResponseProcessingError("schema_validation", false);
+    const result = enforceAnalysisPolicy(parsed.data, input.mode);
     return Response.json(result);
   } catch (error) {
-    console.error(
-      "Analysis failed",
-      error instanceof Error ? error.message : "unknown",
-    );
-    return Response.json(
-      { error: "지금은 분석을 갱신하지 못했습니다." },
-      { status: 502 },
-    );
+    const upstream = error instanceof OpenAIRequestError ? error : null;
+    const processing = error instanceof ResponseProcessingError ? error : null;
+    const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    const validation = error instanceof z.ZodError;
+    const stage = validation ? "request_validation" : processing?.stage ?? (timeout ? "openai_timeout" : upstream ? "openai_request" : "unknown");
+    const retryable = timeout || (upstream ? [408, 429].includes(upstream.status) || upstream.status >= 500 : processing?.retryable ?? (error instanceof TypeError));
+    const status = validation ? 400 : timeout ? 504 : upstream?.status === 429 ? 503 : upstream && upstream.status >= 500 ? 502 : retryable ? 503 : 422;
+    console.error("Analysis failed", { stage, upstreamStatus: upstream?.status, code: upstream?.code, param: upstream?.param, requestId: upstream?.requestId, ...counts, retryable });
+    return Response.json({ error: retryable ? "이해 분석 잠시 지연됨" : "이해 분석을 건너뛰었습니다.", stage, retryable }, { status });
   }
 }

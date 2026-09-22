@@ -24,11 +24,14 @@ export class RealtimeTranscriber {
   private audioContext?: AudioContext;
   private levelTimer?: number;
   private partialText = "";
+  private connecting = false;
   constructor(
-    private options: { keywords: string[]; topic?: string },
+    private options: { keywords: string[]; topic?: string; title?: string; quality?: "accuracy" | "balanced" },
     private callbacks: RealtimeCallbacks,
   ) {}
   async start(reconnecting = false) {
+    if (this.connecting) return;
+    this.connecting = true;
     this.stopped = false;
     this.callbacks.onState(reconnecting ? "reconnecting" : "disconnected");
     try {
@@ -53,7 +56,7 @@ export class RealtimeTranscriber {
       }
       const { value } = await tokenResponse.json();
       if (!value) throw new Error("전사 연결 정보를 받지 못했습니다.");
-      this.stream ??= await navigator.mediaDevices.getUserMedia({
+      if (!this.stream?.getAudioTracks().some(track => track.readyState === "live")) this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -114,7 +117,17 @@ export class RealtimeTranscriber {
       } else if (!this.stopped) {
         this.reconnect();
       }
+    } finally {
+      this.connecting = false;
     }
+  }
+  isHealthy() {
+    return !this.stopped && this.stream?.getAudioTracks().some(track => track.readyState === "live") === true && this.pc?.connectionState === "connected" && this.dc?.readyState === "open";
+  }
+  restoreIfNeeded() {
+    if (this.stopped || this.isHealthy()) return false;
+    this.retry();
+    return true;
   }
   private handle(event: {
     type: string;
@@ -152,10 +165,9 @@ export class RealtimeTranscriber {
       source.connect(analyser);
       await context.resume();
       const samples = new Uint8Array(analyser.fftSize);
-      const detector = new AudioTurnDetector();
+      const detector = new AudioTurnDetector(this.options.quality);
       let lastActivity = "waiting";
       let lastLevelUpdate = 0;
-      let lastCommitAt = performance.now();
       this.levelTimer = window.setInterval(() => {
         if (this.dc?.readyState !== "open") return;
         analyser.getByteTimeDomainData(samples);
@@ -168,9 +180,8 @@ export class RealtimeTranscriber {
           lastLevelUpdate = now;
         }
         const activity = detector.sample(level, now);
-        if (activity === "commit" || now - lastCommitAt >= 30_000) {
+        if (activity === "commit") {
           this.dc.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-          lastCommitAt = now;
           this.callbacks.onActivity?.("transcribing");
           lastActivity = "transcribing";
         } else if (activity !== lastActivity) {
@@ -185,7 +196,7 @@ export class RealtimeTranscriber {
           this.dc.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
           this.callbacks.onActivity?.("transcribing");
         }
-      }, 15_000);
+      }, this.options.quality === "balanced" ? 18_000 : 23_000);
     }
   }
   private stopTurnDetection() {
@@ -196,6 +207,7 @@ export class RealtimeTranscriber {
     this.callbacks.onLevel?.(0);
   }
   private reconnect() {
+    if (this.stopped || this.retryTimer) return;
     this.stopTurnDetection();
     this.pc?.close();
     this.callbacks.onState("reconnecting");
@@ -205,12 +217,16 @@ export class RealtimeTranscriber {
       return;
     }
     this.retryTimer = window.setTimeout(() => {
+      this.retryTimer = undefined;
       if (!this.stopped && navigator.onLine) void this.start(true);
     }, delay);
   }
   retry() {
     this.attempt = 0;
     if (this.retryTimer) window.clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    this.pc?.close();
+    this.dc?.close();
     void this.start(true);
   }
   stop() {
@@ -220,6 +236,7 @@ export class RealtimeTranscriber {
     this.dc?.close();
     this.pc?.close();
     this.stream?.getTracks().forEach((t) => t.stop());
+    this.stream = undefined;
     this.callbacks.onState("disconnected");
   }
 }

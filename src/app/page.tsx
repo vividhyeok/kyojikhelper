@@ -4,7 +4,6 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   AdaptiveAnalysisScheduler,
   analysisPayload,
-  boundedContext,
 } from "@/lib/comprehension/scheduler";
 import {
   isDuplicate,
@@ -12,6 +11,7 @@ import {
 } from "@/lib/comprehension/card-policy";
 import { reduceLectureState } from "@/lib/comprehension/state";
 import { selectHudMessage } from "@/lib/comprehension/hud";
+import { boundedRetryBatch, retryDelay } from "@/lib/comprehension/retry";
 import { EDUCATION_HISTORY_FIXTURE, mockAnalysis } from "@/lib/comprehension/fixtures";
 import { repository, DEFAULT_SETTINGS } from "@/lib/storage/repository";
 import {
@@ -38,8 +38,10 @@ const api = async <T,>(url: string, body: unknown): Promise<T> => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok)
-    throw new Error((await r.json().catch(() => ({}))).error || "요청 실패");
+  if (!r.ok) {
+    const detail = await r.json().catch(() => ({}));
+    throw Object.assign(new Error(detail.error || "요청 실패"), { retryable: detail.retryable === true || r.status >= 500, stage: detail.stage });
+  }
   return r.json();
 };
 export default function Home() {
@@ -216,6 +218,10 @@ function LiveView({
   const [micLevel, setMicLevel] = useState(0);
   const [connection, setConnection] = useState<ConnectionState>("disconnected");
   const [connectionError, setConnectionError] = useState("");
+  const [analysisDelayed, setAnalysisDelayed] = useState(false);
+  const [backgroundGap, setBackgroundGap] = useState(0);
+  const hiddenAtRef = useRef<number | null>(null);
+  const lastFinalAtRef = useRef(0);
   const [wake, setWake] = useState(false);
   const [card, setCard] = useState<ComprehensionEvent | null>(null);
   const [queued, setQueued] = useState<ComprehensionEvent[]>([]);
@@ -257,12 +263,12 @@ function LiveView({
       setBusy(true);
       try {
         const batch = pending ?? scheduler.current.getPending();
+        const firstIndex = batch.length ? l.transcriptSegments.findIndex((s) => s.id === batch[0].id) : l.transcriptSegments.length;
         const payload = {
           ...analysisPayload(
             l.stateSnapshots.at(-1)?.state ?? EMPTY_STATE,
-            boundedContext(l.transcriptSegments.slice(0, -batch.length), mode === "missed" ? 2400 : 1500),
+            l.transcriptSegments.slice(0, firstIndex < 0 ? 0 : firstIndex),
             batch,
-            mode === "missed" ? 2400 : 1500,
           ),
           mode,
           density: settingsRef.current.density,
@@ -306,14 +312,22 @@ function LiveView({
         await save(next);
         scheduler.current.recordOutcome(result.shouldDisplay);
         retryCountRef.current = 0;
-      } catch {
+        setAnalysisDelayed(false);
+      } catch (error) {
         if (mode === "auto" && pending?.length) {
-          const ids = new Set(failedBatchRef.current.map(x => x.id));
-          failedBatchRef.current = [...pending.filter(x => !ids.has(x.id)), ...failedBatchRef.current];
-          if (retryCountRef.current++ < 2) {
+          const retryable = (error as { retryable?: boolean }).retryable === true || error instanceof TypeError;
+          const delay = retryable ? retryDelay(++retryCountRef.current) : null;
+          setAnalysisDelayed(true);
+          if (delay !== null) {
+            failedBatchRef.current = boundedRetryBatch(pending, failedBatchRef.current);
             window.setTimeout(() => {
               if (lectureRef.current?.status === "live" && failedBatchRef.current.length) void enqueueRef.current?.("auto", []);
-            }, 3000 * retryCountRef.current);
+            }, delay);
+          } else {
+            failedBatchRef.current = [];
+            retryCountRef.current = 0;
+            const latest = lectureRef.current;
+            if (latest?.id === l.id) await save({ ...latest, analysisCursor: pending.at(-1)?.id, analysisGaps: [...(latest.analysisGaps ?? []), { timestamp: Date.now(), segmentCount: pending.length }] });
           }
         }
       } finally {
@@ -327,7 +341,7 @@ function LiveView({
       const failed = failedBatchRef.current;
       failedBatchRef.current = [];
       const ids = new Set(failed.map(x => x.id));
-      const batch = [...failed, ...(pending ?? []).filter(x => !ids.has(x.id))];
+      const batch = boundedRetryBatch(failed, (pending ?? []).filter(x => !ids.has(x.id)));
       return analyzeOne(mode, batch.length ? batch : pending);
     });
     analysisQueue.current = task.catch(() => {});
@@ -376,6 +390,7 @@ function LiveView({
         final: true,
       };
       if (l.transcriptSegments.some((s) => s.id === id)) return;
+      lastFinalAtRef.current = seg.timestamp;
       const next = { ...l, transcriptSegments: [...l.transcriptSegments, seg] };
       await save(next);
       const d = scheduler.current.add(seg, l.transcriptSegments.at(-1));
@@ -389,7 +404,7 @@ function LiveView({
   const connect = useCallback(
     async (l: Lecture) => {
       transcriber.current = new RealtimeTranscriber(
-        { keywords: l.keywords, topic: l.topic },
+        { keywords: l.keywords, topic: l.topic, title: l.title, quality: settingsRef.current.transcriptionQuality },
         {
           onPartial: setPartial,
           onFinal,
@@ -418,6 +433,29 @@ function LiveView({
       void connect(initial);
     }
   }, [initial, lecture, connection, connect]);
+  useEffect(() => {
+    if (!lecture || lecture.demo || lecture.status !== "live") return;
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") { hiddenAtRef.current = Date.now(); return; }
+      const hiddenAt = hiddenAtRef.current;
+      hiddenAtRef.current = null;
+      const recovered = transcriber.current?.restoreIfNeeded() ?? false;
+      void wakeLock.current?.acquire();
+      const gapStart = Math.max(hiddenAt ?? 0, lastFinalAtRef.current);
+      if (recovered && hiddenAt && Date.now() - gapStart > 1000) {
+        const latest = lectureRef.current;
+        if (latest) {
+          const now = Date.now();
+          void save({ ...latest, transcriptionGaps: [...(latest.transcriptionGaps ?? []), { from: gapStart, to: now }] });
+          setBackgroundGap(Math.round((now - gapStart) / 1000));
+        }
+      }
+    };
+    const onOnline = () => transcriber.current?.restoreIfNeeded();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("online", onOnline);
+    return () => { document.removeEventListener("visibilitychange", onVisibility); window.removeEventListener("online", onOnline); };
+  }, [lecture]);
   const start = async (data: {
     title: string;
     topic: string;
@@ -559,7 +597,7 @@ function LiveView({
               : "전사 대기"}
         </span>
         <span className="signal-extra">
-          {busy ? "이해 정리 중" : wake ? "화면 켜짐" : "화면 유지 불가"}
+          {backgroundGap ? `${backgroundGap}초 수음 확인 필요` : analysisDelayed ? "이해 분석 잠시 지연됨" : busy ? "이해 정리 중" : wake ? "화면 켜짐" : "화면 유지 불가"}
         </span>
       </div>
       {connection !== "connected" && connectionError && (
@@ -932,6 +970,13 @@ function SettingsView({
           >
             보통<small>조금 더 자주</small>
           </button>
+        </div>
+      </section>
+      <section>
+        <h2>전사 품질</h2>
+        <div className="choice">
+          <button className={value.transcriptionQuality === "accuracy" ? "active" : ""} onClick={() => onChange({ ...value, transcriptionQuality: "accuracy" })}>정확도 우선<small>강의용 기본값</small></button>
+          <button className={value.transcriptionQuality === "balanced" ? "active" : ""} onClick={() => onChange({ ...value, transcriptionQuality: "balanced" })}>균형<small>조금 더 빠르게</small></button>
         </div>
       </section>
       <section>

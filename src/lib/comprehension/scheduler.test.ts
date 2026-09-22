@@ -37,6 +37,6 @@ describe("adaptive scheduler", () => {
     const x = Array.from({ length: 20 }, (_, i) =>
       seg(String(i), "가".repeat(100)),
     );
-    expect(boundedContext(x, 500).length).toBeLessThanOrEqual(5);
+    expect(boundedContext(x, { maxChars: 500, maxSegments: 12 }).length).toBeLessThanOrEqual(5);
   });
 });

@@ -9,6 +9,8 @@ import {
 const schema = z.object({
   keywords: z.array(z.string()).default([]),
   topic: z.string().optional(),
+  title: z.string().max(120).optional(),
+  quality: z.enum(["accuracy", "balanced"]).default("accuracy"),
 });
 
 const headers = { "Cache-Control": "no-store" };
@@ -36,6 +38,8 @@ export async function POST(request: Request) {
   const payload = transcriptionSession({
     model,
     topic: input.topic?.slice(0, 200),
+    title: input.title,
+    quality: input.quality,
     keywords: input.keywords,
   });
 

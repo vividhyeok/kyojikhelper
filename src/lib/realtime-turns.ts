@@ -1,5 +1,7 @@
 /** Segments the live WebRTC audio track without retaining or recording samples. */
 export class AudioTurnDetector {
+  constructor(private quality: "accuracy" | "balanced" = "accuracy") {}
+  get maxTurnMs() { return this.quality === "accuracy" ? 23_000 : 18_000; }
   private firstVoiceAt: number | null = null;
   private lastVoiceAt = 0;
   private lastSampleAt = 0;
@@ -15,7 +17,7 @@ export class AudioTurnDetector {
 
     if (this.firstVoiceAt === null || this.voicedMs < 450)
       return this.firstVoiceAt === null ? "waiting" : "speech";
-    if (now - this.lastVoiceAt >= 900 || now - this.firstVoiceAt >= 15_000) {
+    if (now - this.lastVoiceAt >= (this.quality === "accuracy" ? 1_500 : 1_100) || now - this.firstVoiceAt >= this.maxTurnMs) {
       this.firstVoiceAt = null;
       this.voicedMs = 0;
       return "commit";

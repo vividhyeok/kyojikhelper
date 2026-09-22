@@ -73,6 +73,8 @@ export interface Lecture {
   status: "live" | "finished";
   demo?: boolean;
   analysisCursor?: string;
+  analysisGaps?: { timestamp: number; segmentCount: number }[];
+  transcriptionGaps?: { from: number; to: number }[];
   transcriptSegments: TranscriptSegment[];
   comprehensionEvents: ComprehensionEvent[];
   conceptLinks?: ConceptLink[];
@@ -83,6 +85,7 @@ export interface Settings {
   density: "minimal" | "normal";
   profile: string;
   transcriptDisplay: "hidden" | "small";
+  transcriptionQuality: "accuracy" | "balanced";
 }
 export const EMPTY_STATE: LectureState = {
   currentTopic: "강의를 듣는 중",

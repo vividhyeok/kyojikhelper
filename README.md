@@ -58,6 +58,10 @@ Windows PowerShell에서는 `Copy-Item .env.example .env.local`을 사용할 수
 
 Wake Lock과 마이크는 보안 컨텍스트(HTTPS 또는 localhost)에서 동작합니다. Android가 앱을 background로 보내거나 절전 정책으로 중단하면 실시간 전사가 잠시 멈출 수 있으며, foreground 복귀 시 Wake Lock과 Realtime 연결을 다시 확보합니다.
 
+전사 품질 기본값은 **정확도 우선**입니다. `gpt-live-transcribe`의 `high` 지연 설정과 약 1.5초 침묵/23초 최대 turn을 사용하여 강의의 짧은 쉼을 불필요하게 나누지 않습니다. Settings의 **균형**은 `medium`과 약 1.1초/18초 turn으로 조금 더 빠르게 반응합니다. 품질 변경은 다음 수업 연결부터 적용됩니다.
+
+PWA의 짧은 background 전환 중 마이크/WebRTC 연결은 브라우저가 허용하는 한 유지합니다. foreground 복귀 시 연결과 Wake Lock을 확인하여 필요하면 새 임시 인증 정보로 재연결하고, 연결이 끊긴 구간은 수음 확인 필요 상태로 남깁니다. **화면 OFF·Android 프로세스 일시중지/종료 시 PWA 마이크 지속은 보장할 수 없습니다.** 음성은 여전히 저장하지 않으므로 누락된 발화를 AI가 복원한 것처럼 취급하지 않습니다.
+
 ## API architecture
 
 ```text

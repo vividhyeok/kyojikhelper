@@ -4,6 +4,7 @@ export class OpenAIRequestError extends Error {
     readonly status: number,
     readonly code: string | null,
     readonly param: string | null,
+    readonly requestId: string | null = null,
   ) {
     super(`OpenAI ${status}`);
   }
@@ -43,19 +44,7 @@ export async function openaiFetch(
       param,
       requestId,
     });
-    throw new OpenAIRequestError(response.status, code, param);
+    throw new OpenAIRequestError(response.status, code, param, requestId);
   }
   return response.json();
-}
-export function responseOutputText(data: {
-  output_text?: string;
-  output?: { content?: { type?: string; text?: string }[] }[];
-}) {
-  return (
-    data.output_text ??
-    data.output
-      ?.flatMap((o) => o.content ?? [])
-      .find((c) => c.type === "output_text")?.text ??
-    ""
-  );
 }

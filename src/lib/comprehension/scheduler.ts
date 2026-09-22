@@ -1,4 +1,5 @@
 import { LectureState, TranscriptSegment } from "@/lib/types";
+import { ANALYSIS_LIMITS } from "./limits";
 
 const MARKERS = [
   "그런데",
@@ -117,14 +118,26 @@ export class AdaptiveAnalysisScheduler {
   }
 }
 
-export function boundedContext(segments: TranscriptSegment[], maxChars = 1500) {
+export function boundedContext(
+  segments: TranscriptSegment[],
+  limits: { maxChars: number; maxSegments: number } = {
+    maxChars: ANALYSIS_LIMITS.recentMaxChars,
+    maxSegments: ANALYSIS_LIMITS.recentMaxSegments,
+  },
+) {
   const chosen: TranscriptSegment[] = [];
   let total = 0;
-  for (let i = segments.length - 1; i >= 0; i--) {
-    const size = segments[i].text.length;
-    if (total + size > maxChars && chosen.length) break;
-    chosen.unshift(segments[i]);
-    total += size;
+  const seen = new Set<string>();
+  for (let i = segments.length - 1; i >= 0 && chosen.length < limits.maxSegments; i--) {
+    const segment = segments[i];
+    if (seen.has(segment.id)) continue;
+    const text = segment.text.slice(-ANALYSIS_LIMITS.segmentMaxChars);
+    const remaining = limits.maxChars - total;
+    if (remaining <= 0) break;
+    const kept = text.slice(-remaining);
+    chosen.unshift({ ...segment, text: kept });
+    seen.add(segment.id);
+    total += kept.length;
   }
   return chosen;
 }
@@ -132,11 +145,20 @@ export function analysisPayload(
   state: LectureState,
   recent: TranscriptSegment[],
   pending: TranscriptSegment[],
-  maxRecentChars = 1500,
 ) {
+  const latestPending = boundedContext(pending, {
+    maxChars: ANALYSIS_LIMITS.pendingMaxChars,
+    maxSegments: ANALYSIS_LIMITS.pendingMaxSegments,
+  });
+  const chosenIds = new Set(latestPending.map((s) => s.id));
+  const overflow = pending.filter((s) => !chosenIds.has(s.id));
+  const latestRecent = boundedContext([...recent, ...overflow], {
+    maxChars: ANALYSIS_LIMITS.recentMaxChars,
+    maxSegments: ANALYSIS_LIMITS.recentMaxSegments,
+  });
   return {
     state,
-    recent: boundedContext(recent, maxRecentChars).map((s) => s.text),
-    pending: pending.map((s) => s.text),
+    recent: latestRecent.map((s) => s.text),
+    pending: latestPending.map((s) => s.text),
   };
 }

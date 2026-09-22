@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ANALYSIS_LIMITS } from "@/lib/comprehension/limits";
 export const relationSchema = z.enum(["cause","premise","problem_solution","contrast","example","elaboration","definition","category","chronology","return","association","unclear"]);
 export const epistemicSchema = z.enum(["explicit","inferred","background","professor_opinion","unclear"]);
 const linkSchema = z.object({from:z.string().max(100),to:z.string().max(100),relation:relationSchema,label:z.string().max(100).optional()});
@@ -19,9 +20,9 @@ export const analyzeRequestSchema = z.object({
   density: z.enum(["minimal", "normal"]).default("minimal"),
   profile: z.string().max(2000),
   state: stateSchema,
-  recent: z.array(z.string().max(800)).max(12),
-  pending: z.array(z.string().max(800)).max(12),
-});
+  recent: z.array(z.string().max(ANALYSIS_LIMITS.segmentMaxChars)).max(ANALYSIS_LIMITS.recentMaxSegments),
+  pending: z.array(z.string().max(ANALYSIS_LIMITS.segmentMaxChars)).max(ANALYSIS_LIMITS.pendingMaxSegments),
+}).refine((value) => value.recent.join("").length <= ANALYSIS_LIMITS.recentMaxChars && value.pending.join("").length <= ANALYSIS_LIMITS.pendingMaxChars, "analysis_context_limit");
 export const analysisSchema = z.object({
   shouldDisplay: z.boolean(),
   eventType: z.enum([

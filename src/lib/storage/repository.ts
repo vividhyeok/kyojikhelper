@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS: Settings = {
   density: "minimal",
   profile: DEFAULT_PROFILE,
   transcriptDisplay: "hidden",
+  transcriptionQuality: "accuracy",
 };
 
 export class IndexedDbLectureRepository {
@@ -65,7 +66,7 @@ export class IndexedDbLectureRepository {
   }
   async getSettings() {
     const saved = await (await this.getDb()).get("settings", "main");
-    return saved ? { ...saved, profile: saved.profile === LEGACY_PROFILE ? DEFAULT_PROFILE : saved.profile } : DEFAULT_SETTINGS;
+    return saved ? { ...DEFAULT_SETTINGS, ...saved, profile: saved.profile === LEGACY_PROFILE ? DEFAULT_PROFILE : saved.profile } : DEFAULT_SETTINGS;
   }
   async saveSettings(settings: Settings) {
     await (await this.getDb()).put("settings", settings, "main");
